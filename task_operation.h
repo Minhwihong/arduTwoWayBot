@@ -4,6 +4,24 @@
 
 
 
+/***************************************************************/
+// UDP cmd
+
+#define FRM_NORMAL	'N'
+#define FRM_DEBUG	'D'
+#define FRM_UPDATE	'U'
+
+#define FRM_NORMAL_IDX	0
+
+#define PKT_ID_NORMAL	0xAB
+
+
+
+
+
+/****************************************************************/
+
+
 
 
 

@@ -93,6 +93,7 @@ typedef struct UDP_packet {
 	uint8_t pktLen;
 	uint8_t data[256];
 	uint8_t checksum;
+	bool    pktOK;
 }UDP_pkt_t;
 
 

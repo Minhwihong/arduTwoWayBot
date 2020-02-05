@@ -2,8 +2,39 @@
 #include "main.h"
 
 
-UDP_pkt_t rcvPkt;
+UDP_pkt_t rcvPkts[5];
 UDP_rcvSts_t UDP_rcvSts = eUDP_wait_frmId;
+
+
+static uint8_t CS_Calculation(uint8_t *inArr, uint16_t leng)
+{
+	uint8_t ret = 0;
+	
+	for(int idx=0; idx < leng - 1; ++ idx)
+	{
+		ret += inArr[idx];
+
+		if (ret > 0xFF)
+			ret -= 0xFF;
+	}
+
+	return ret;
+
+}
+
+static void UDP_initPacketStructure(UDP_pkt_t* inPkt)
+{
+	inPkt->checksum = 0;
+	inPkt->frmId = 0;
+	inPkt->frmIdx = 0;
+	inPkt->pktCmd = 0;
+	inPkt->pktId = 0;
+	inPkt->pktLen = 0;
+	inPkt->pktOK = false;
+	memset(inPkt->data,0,256);
+}
+
+
 
 
 
@@ -285,6 +316,113 @@ void SerialReadHandle()
 }
 
 
+
+
+
+void UDP_rcvHandler()
+{
+	static int dataIdx = 0;
+
+	byte  packetBuffer[255];
+	int   leng;
+	bool  rcvOK = receiveData_fromServer(packetBuffer, &leng);
+	UDP_pkt_t rcvingPkt;
+	uint16_t add = 0;
+
+	rcvingPkt.pktOK = false;
+
+	while(leng != add)
+	{
+		switch(UDP_rcvSts)
+		{
+			case eUDP_wait_frmId:
+				UDP_initPacketStructure(&rcvingPkt);
+				rcvingPkt.frmId 	= packetBuffer[add++];
+
+				switch(rcvingPkt.frmId)
+				{
+					case FRM_NORMAL:
+					case FRM_DEBUG:
+					case FRM_UPDATE:	UDP_rcvSts	= eUDP_wait_frmIdx;	break;
+					default:			UDP_rcvSts 	= eUDP_wait_frmId;	break;
+				}
+
+				break;
+				
+			case eUDP_wait_frmIdx:
+				rcvingPkt.frmIdx 	= packetBuffer[add++];
+
+				switch(rcvingPkt.frmIdx)
+				{
+					case FRM_NORMAL_IDX:UDP_rcvSts	= eUDP_wait_pktId;	break;
+					default:			UDP_rcvSts	= eUDP_wait_frmId;	break;
+				}
+
+				break;
+				
+			case eUDP_wait_pktId:
+				//PKT_ID_NORMAL
+				rcvingPkt.pktId 	= packetBuffer[add++];
+
+				switch(rcvingPkt.pktId)
+				{
+					case PKT_ID_NORMAL:	UDP_rcvSts	= eUDP_wait_pktCmd;	break;
+					default:			UDP_rcvSts	= eUDP_wait_frmId;	break;
+				}
+				break;
+				
+			case eUDP_wait_pktCmd:
+				rcvingPkt.pktCmd 	= packetBuffer[add++];
+
+				switch(rcvingPkt.pktId)
+				{
+					case uCMD_MT_SPD:
+					case uCMD_MT_STOP:
+					case uCMD_MT_REV:
+					case uCMD_PID_ONOFF:
+					case uCMD_PID_RST:
+					case uCMD_PID_SET_K_PARAM:
+					case uCMD_PID_SET_TRT_ANGLE:UDP_rcvSts	= eUDP_wait_pktLen;	break;
+					default:					UDP_rcvSts	= eUDP_wait_frmId;	break;
+				}
+				
+				UDP_rcvSts 			= eUDP_wait_pktLen;
+				break;
+				
+			case eUDP_wait_pktLen:
+				rcvingPkt.pktLen 	= packetBuffer[add++];
+				UDP_rcvSts 			= eUDP_wait_data;
+				dataIdx				= 0;
+				break;
+				
+			case eUDP_wait_data:
+				rcvingPkt.data[dataIdx++] = packetBuffer[add++];
+
+				if(dataIdx == rcvingPkt.pktLen)
+				{
+					UDP_rcvSts 			= eUDP_wait_cs;
+				}
+				break;
+				
+			case eUDP_wait_cs:
+				rcvingPkt.checksum = packetBuffer[add++];
+				uint8_t calCs = CS_Calculation(packetBuffer, leng);
+
+				if(rcvingPkt.checksum == calCs)
+				{
+					rcvingPkt.pktOK = true;
+				}
+
+				
+				break;
+				
+				
+		}
+
+	}
+
+
+}
 
 
 
