@@ -1,7 +1,7 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
-#if 1
+
 #include <Wire.h>
 #include "MPU9250.h"
 #include <WiFi.h>
@@ -11,9 +11,10 @@
 #include <ESP32MotorControl.h>
 #include <ESP32Servo.h>
 
-#endif
+#include "queue.h"
 #include "task_setting.h"
 #include "task_operation.h"
+
 
 
 #define TARGET_DEG -2.0
@@ -21,10 +22,27 @@
 
 
 
+
+//#define ISR_DBG_MODE
+
+#define PRINT_DBG(A)	Serial.print((A))
+#define PRINTLN_DBG(A)	Serial.println((A))
+
+#define PRINT_LOG(A,B) 	Serial.print("["); 	\
+				Serial.print((A));			\
+				Serial.print("/");			\
+				Serial.print((B));			\
+				Serial.print("]");	
+
+
+//Serial.print
+
+
 typedef enum {
+	uCMD_SYS_SEND_ALIVE = 0x05,
 	uCMD_MT_SPD = 0x10,
 	uCMD_MT_STOP,
-	uCMD_MT_REV,
+	uCMD_MT_MOVE,
 	uCMD_PID_ONOFF = 0x14,
 	uCMD_PID_RST,
 	uCMD_PID_SET_K_PARAM,
@@ -40,15 +58,15 @@ typedef struct UDP_Client {
   int port;
 }UDP_Client_t;
 
-
+#if 0
 typedef struct {
 	bool rcvReq_IMU;
 	bool rcvReq_PID;
 
 }UDP_rcvSts_t;
+#endif
 
-
-typedef enum UDP_rcvSts {
+typedef enum  {
 	eUDP_wait_frmId = 0,
 	eUDP_wait_frmIdx,
 	eUDP_wait_pktId ,
@@ -85,16 +103,7 @@ typedef struct IMU_6axis {
 }IMU_6axis_t;
 
 
-typedef struct UDP_packet {
-	uint8_t	frmId;
-	uint8_t frmIdx;
-	uint8_t pktId;
-	uint8_t pktCmd;
-	uint8_t pktLen;
-	uint8_t data[256];
-	uint8_t checksum;
-	bool    pktOK;
-}UDP_pkt_t;
+
 
 
 extern UDP_rcvSts_t UDP_rcvSts;
@@ -119,11 +128,13 @@ extern bool PID_Start;
 ////double roll  = atan2(accY, accZ) * RAD_TO_DEG;
 
 extern ESP32MotorControl myMotor;
-extern MPU9250 IMU;
+extern MPU9250 inIMU;
 
 
 extern IMU_6axis_t valMPU9255;
-extern int status;
+extern int IMU_status;
+
+extern double tmIntvIMU;
 
 
 
@@ -134,7 +145,7 @@ extern byte mSpd ;
 extern byte dir ;
 
 
-extern UDP_pkt_t rcvPkt;
+//extern UDP_pkt_t rcvPkt;
 
 
 
@@ -142,16 +153,16 @@ extern UDP_pkt_t rcvPkt;
 
 
 void init_UDPClient();
-void sendData_toServer(byte *inByte, int leng, UDP_Client_t myClient);
+void sendData_toServer(uint8_t cmd, uint8_t *inByte, int leng, UDP_Client_t myClient);
 void WiFiEvent(WiFiEvent_t event);
 bool receiveData_fromServer(byte *rcvPkt, int *leng);
-void UDP_cmdControl(byte cmd, byte *payload);
+void UDP_cmdControl(uint8_t cmd, uint8_t *payload);
 
 double PID_Control();
 void PID_Init();
 void IMU_Init();
 
-void getIMUData();
+uint8_t getIMUData();
 void sendIMUData();
 void SerialReadHandle();
 void send_PID_Parameter();

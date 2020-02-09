@@ -6,21 +6,68 @@ UDP_pkt_t rcvPkts[5];
 UDP_rcvSts_t UDP_rcvSts = eUDP_wait_frmId;
 
 
+
+static double dt_PID = 0.0;
+
+
+static bool sts_sendIMU = false;
+static bool sts_sendPID = false;
+
+
+
+
+
 static uint8_t CS_Calculation(uint8_t *inArr, uint16_t leng)
 {
-	uint8_t ret = 0;
+	uint16_t ret = 0;
 	
-	for(int idx=0; idx < leng - 1; ++ idx)
+	for(int idx=0; idx < leng; ++ idx)
 	{
-		ret += inArr[idx];
+		ret += (uint16_t)inArr[idx];
 
 		if (ret > 0xFF)
 			ret -= 0xFF;
 	}
 
-	return ret;
+	return (uint8_t)ret;
 
 }
+
+
+static void sendUDP_dummy()
+{
+	uint8_t myBuffer[100] = {0};
+	int offset = 0;
+
+	//Frame ID
+	myBuffer[offset++] = (uint8_t)FRM_NORMAL;
+
+	//Frame Idx
+	myBuffer[offset++] = FRM_NORMAL_IDX;
+
+	//Packet ID
+	myBuffer[offset++] = PKT_ID_NORMAL;
+
+	//Packet CMD
+	myBuffer[offset++] = uCMD_SYS_SEND_ALIVE;
+
+	//Data length
+	myBuffer[offset++] = 0;
+
+	uint8_t cs = CS_Calculation(myBuffer, offset);
+
+	myBuffer[offset++] = cs;
+
+	char chAddr[myUDPClient.addr.length()+1] = {'\0'};
+	myUDPClient.addr.toCharArray(chAddr, myUDPClient.addr.length()+1);
+
+	udp_client.beginPacket(chAddr, myUDPClient.port);
+	udp_client.write(myBuffer, offset);
+
+	udp_client.endPacket();
+}
+
+
 
 static void UDP_initPacketStructure(UDP_pkt_t* inPkt)
 {
@@ -56,91 +103,220 @@ signed char WIFI_Handle_Task(uint8_t id, uint16_t param)
 
 
 
-signed char UDP_Message_Task(uint8_t id, uint16_t param)
+
+
+
+void UDP_cmdControl(uint8_t cmd, uint8_t *payload)
 {
-	
-	byte  packetBuffer[255];
-	int   leng;
-	bool  rcvOK = receiveData_fromServer(packetBuffer, &leng);
+	uint8_t u8Val = 0;
+	uint8_t	arrBuffer[16];
+	uint8_t add = 0;
+	float fVal =0.0f;
 
-	if(rcvOK == true)
+	PRINT_DBG("--- cmd control start ---\r\n");
+	PRINT_DBG(" cmd: "); 	PRINTLN_DBG(cmd);
+	PRINT_DBG("-------------------------\r\n");
+	//PRINT_DBG("cmd: "); 	PRINT_DBG(cmd);
+
+	switch(cmd)
 	{
-		byte cmd		  = packetBuffer[0];
-		byte payload[254] = {0};
-
-		uint16_t add = 0;
+		case uCMD_MT_SPD:
+			mSpd = payload[0];
+			//myMotor.motorForward(0, mSpd);
+			
+			PRINT_DBG("[Set Motor Speed]val: ");	PRINTLN_DBG(mSpd);
+			break;
+			
+		case uCMD_MT_STOP:  		//MotorSpeed Control
+			mSpd = payload[0];
+			myMotor.motorForward(0, 0);
 		
+			PRINTLN_DBG("Motor Stop");
+			break;
+			
+		case uCMD_MT_MOVE:  			//Motor Dir Change
+			dir = payload[0];
 
-		while(leng != add)
-		{
-			switch(UDP_rcvSts)
+			PRINT_DBG("[Motor Speed]val: ");	PRINTLN_DBG(mSpd);
+			if(dir == 0)
 			{
-				case eUDP_wait_frmId:
-					break;
+				myMotor.motorForward(0, mSpd);
+				PRINTLN_DBG(" Forward");
+			}
+			else
+			{
+				myMotor.motorReverse(0, mSpd);
+				PRINTLN_DBG(" Backward");
+			}
+			
+			break;
 
-				case eUDP_wait_frmId:
-					break;
-
-				case eUDP_wait_frmId:
-					break;
-
-				case eUDP_wait_frmId:
-					break;
-
-				case eUDP_wait_frmId:
-					break;
-
-				case eUDP_wait_frmId:
-					break;
-
+		case uCMD_PID_ONOFF:		// start stop PID Control
+			u8Val = payload[0];
+			if(u8Val == 1)
+				PID_Start = true;
+			else {
+				PID_Start = false;
+				PID_Init();
 			}
 
-		}
+			PRINT_DBG("[Set PID OnOff]");	
+			(PID_Start == true) ? PRINTLN_DBG(" PID Start~") : PRINTLN_DBG(" PID Stop!");
+			break;
+
+		case uCMD_PID_RST:	// PID Reset
+			PID_Init();
+			PRINTLN_DBG("[PID Reset]");
+			break;
+
+		case uCMD_PID_SET_K_PARAM:	// Set Ki, Kp, Kd value
+			add = 0;
+#if 0
+						fVal = 0.0f;
+			Serial.println("-------- payload ---------");
+			for(uint8_t idx =0; idx < 4*3; ++idx)	
+			{
+				Serial.print(payload[idx], HEX);
+				Serial.print(", ");
+			}
+			Serial.print("\r\n");
+			Serial.println("--------------------------");	
+#endif	
+			
+			for(uint8_t idx =0; idx < (uint8_t)sizeof(double); ++idx)	arrBuffer[idx] = payload[add++];
+			memcpy(&pid_cfg.Kp, arrBuffer, sizeof(double));
+
+			for(uint8_t idx =0; idx < (uint8_t)sizeof(double); ++idx)	arrBuffer[idx] = payload[add++];
+			memcpy(&pid_cfg.Ki, arrBuffer, sizeof(double));
+
+			for(uint8_t idx =0; idx < (uint8_t)sizeof(double); ++idx)	arrBuffer[idx] = payload[add++];
+			memcpy(&pid_cfg.Kd, arrBuffer, sizeof(double));
+			
+			PRINT_DBG("[Set PID param] Kp: ");	Serial.println(pid_cfg.Kp,4); //PRINTLN_DBG(pid_cfg.Kp,4); 			
+			PRINT_DBG("[Set PID param] Ki: ");	Serial.println(pid_cfg.Ki,4);//PRINTLN_DBG(pid_cfg.Ki,4);
+			PRINT_DBG("[Set PID param] Kd: ");	Serial.println(pid_cfg.Kd,4);//PRINTLN_DBG(pid_cfg.Kd,4);
+			break;
+
+		case uCMD_PID_SET_TRT_ANGLE:	// Target Angle set
+			add = 0;
+			for(uint8_t idx =0; idx < (uint8_t)sizeof(double); ++idx)	arrBuffer[idx] = payload[add++];	
+			memcpy(&pid_cfg.targetAngle, arrBuffer, sizeof(double));
+			
+			PRINT_DBG("[Set target Angle] angle: ");	Serial.println(pid_cfg.targetAngle,4);//PRINTLN_DBG(pid_cfg.targetAngle,4);
+			break;
+
+		case uCMD_PID_SEND_PARAM:	// send err parameter
+			if(sts_sendPID == false)	sts_sendPID = true;
+			else 						sts_sendPID = false;
+
+			(sts_sendPID == true) ? PRINTLN_DBG("PID parameter send start~") : PRINTLN_DBG("PID parameter send stop~") ;
+			
+			break;
+
+		case uCMD_IMU_SEND_VALUE:
+			if(sts_sendIMU == false)	sts_sendIMU = true;
+			else 						sts_sendIMU = false;
+
+			(sts_sendIMU == true) ? PRINTLN_DBG("IMU logging start~") : PRINTLN_DBG("IMU logging stop~") ;
+			break;
+
+
+	}
+  
+}
 
 
 
 
+static void UDP_Send_Arrive()
+{
+	static uint16_t aliveSend = 0;
 
-
-		
-
-		
-		memcpy(payload, &packetBuffer[1], leng);
-		UDP_cmdControl(cmd, payload);
+	aliveSend++;
+	
+	if(aliveSend >= 20)
+	{
+		aliveSend = 0;
+		sendUDP_dummy();
 	}
 
+}
 
-	if(UDP_RcvSts.rcvReq_IMU == true)
-	{
-		UDP_RcvSts.rcvReq_IMU = false;
-		sendIMUData();
-	}
 
-	if(UDP_RcvSts.rcvReq_PID == true)
+signed char UDP_Message_Task(uint8_t id, uint16_t param)
+{
+	byte  packetBuffer[255];
+	int   leng;
+	uint8_t		pktValid; 
+	UDP_pkt_t* rcvPkt = NULL;
+
+
+	if(sts_sendIMU == false)	UDP_Send_Arrive();
+
+
+	rcvPkt = UDP_queue_get_data(&pktValid);
+
+	if(rcvPkt == NULL || rcvPkt->pktOK == false)
+		return -1;
+
+	rcvPkt->pktOK = false;
+	PRINT_DBG("rcv cmd: ");
+	PRINTLN_DBG(rcvPkt->pktCmd);
+	PRINTLN_DBG("\r\n");
+	
+	UDP_cmdControl(rcvPkt->pktCmd , rcvPkt->data);
+	
+
+	return 0;
+}
+
+
+signed char Balacing_Msg_Task(uint8_t id, uint16_t param)
+{
+	
+	if(sts_sendPID == true)
 	{
-		UDP_RcvSts.rcvReq_PID = false;
 		send_PID_Parameter();
 	}
 
-
-	return 0;
-}
-
-
-signed char Balancing_Proc_Task(uint8_t id, uint16_t param)
-{
-	if(PID_Start)
-		PID_Control();
-
+	if(sts_sendIMU == true)
+		sendIMUData();
 
 	return 0;
 }
 
 
 
-signed char IMU_Handle_Task(uint8_t id, uint16_t param)
+signed char Balancing_Task(uint8_t id, uint16_t param)
 {
-	getIMUData();
+	static uint16_t tickIMU_conn = 0;
+
+	if (IMU_status < 0) {
+		tickIMU_conn++;
+		if(tickIMU_conn >= 40)
+		{
+			tickIMU_conn = 0;
+			Serial.println("[IMUtask]trying IMU conn");
+			IMU_Init();
+			Serial.println("\r\n");
+		}
+
+		return 0;
+	}
+
+	if(getIMUData() < 0)
+	{
+		sts_sendIMU = false;
+		return -1;
+	}
+
+
+	if(PID_Start)	PID_Control();
+		
+
+	
+	
+	//getIMUData();
 	return 0;
 }
 
@@ -163,6 +339,12 @@ signed char LedToggle_Task(uint8_t id, uint16_t param)
 }
 
 
+signed char Task_UDP_Rcv_Handler(uint8_t id, uint16_t param)
+{
+	UDP_rcvHandler();
+
+	return 0;
+}
 
 
 
@@ -175,8 +357,8 @@ double PID_Control()
 
 	
 	double err 		= pid_cfg.targetAngle - last_err;
-	accum_err 		+= (err*PID_DT);   
-
+	//accum_err 		+= (err*PID_DT);   
+	accum_err 		+= (err*dt_PID);   
 
 	pid_cfg.P_Reg 	= pid_cfg.Kp * theta;
 	pid_cfg.I_Reg 	= pid_cfg.Ki * accum_err;
@@ -189,63 +371,48 @@ double PID_Control()
 
 
 
-bool receiveData_fromServer(byte *rcvPkt, int *leng)
+
+
+
+void sendData_toServer(uint8_t cmd, uint8_t *inByte, int leng, UDP_Client_t myClient)
 {
-  // if there's data available, read a packet
-  int packetSize = udp_client.parsePacket();
-  
-  if (packetSize) {
-    Serial.print("Received packet of size ");
-    Serial.println(packetSize);
-    Serial.print("From ");
-    IPAddress remoteIp = udp_client.remoteIP();
-    Serial.print(remoteIp);
-    Serial.print(", port ");
-    Serial.println(udp_client.remotePort());
+	uint8_t myBuffer[100] = {0};
+	int offset = 0;
 
-    // read the packet into packetBufffer
-    *leng = udp_client.read(rcvPkt, 255);
-    if (*leng > 0) {
-      rcvPkt[*leng] = 0;
-    }
-    Serial.println("Contents:");
-    //Serial.println(packetBuffer);
-    return true;
-  }
-  else
-    return false;
-  
-}
+	//Frame ID
+	myBuffer[offset++] = (uint8_t)FRM_NORMAL;
 
+	//Frame Idx
+	myBuffer[offset++] = FRM_NORMAL_IDX;
 
-void sendData_toServer(byte *inByte, int leng, UDP_Client_t myClient)
-{
-  uint8_t myBuffer[100] = {0};
-  uint8_t offset = 0;
+	//Packet ID
+	myBuffer[offset++] = PKT_ID_NORMAL;
 
-  //Packet ID
-  myBuffer[offset++] = 0x21;
+	//Packet CMD
+	myBuffer[offset++] = cmd;
 
-  //Packet CMD
-  myBuffer[offset++] = 0x01;
+	//Data length
+	myBuffer[offset++] = (uint8_t)leng;
 
-  //Data length
-  myBuffer[offset++] = (byte)leng;
-  
-  memcpy(&myBuffer[offset], inByte, leng);
+	memcpy(&myBuffer[offset], inByte, leng);
+	offset += leng;
 
-  char chAddr[myClient.addr.length()+1] = {'\0'};
-  myClient.addr.toCharArray(chAddr, myClient.addr.length()+1);
+	uint8_t cs = CS_Calculation(myBuffer, offset);
 
-  //Serial.print("  IP: ");
-  //Serial.println(chAddr);
-  //Serial.print("Port: ");
-  //Serial.println(myClient.port);
-  
-  udp_client.beginPacket(chAddr, myClient.port);
-  udp_client.write(myBuffer, leng);
+	myBuffer[offset++] = cs;
 
-  udp_client.endPacket();
+	char chAddr[myClient.addr.length()+1] = {'\0'};
+	myClient.addr.toCharArray(chAddr, myClient.addr.length()+1);
+
+	//Serial.print("  IP: ");
+	//Serial.println(chAddr);
+	//Serial.print("Port: ");
+	//Serial.println(myClient.port);
+
+	udp_client.beginPacket(chAddr, myClient.port);
+	udp_client.write(myBuffer, offset);
+
+	udp_client.endPacket();
   //if(udp_client.endPacket() == 1)
     //Serial.println("Data Send OK!");
   //else
@@ -254,23 +421,96 @@ void sendData_toServer(byte *inByte, int leng, UDP_Client_t myClient)
 
 
 
-void getIMUData()
+uint8_t getIMUData()
 {
-  IMU.readSensor();
-  // display the data
-  
-  // G value output unit : g
-  valMPU9255.AccelX = IMU.getAccelX_mss(); 
-  valMPU9255.AccelY = IMU.getAccelY_mss(); 
-  valMPU9255.AccelZ = IMU.getAccelZ_mss(); 
-  
-  // Gyro value output unit : radian
-  valMPU9255.GyroX = IMU.getGyroX_rads(); 
-  valMPU9255.GyroY = IMU.getGyroY_rads(); 
-  valMPU9255.GyroZ = IMU.getGyroZ_rads(); 
+	int ret = inIMU.readSensor();
+	
+	// display the data
 
+	if(ret < 0)
+		return (uint8_t)ret;
+
+	dt_PID 		= tmIntvIMU;	//Time elapse after previous getting IMU data (unit: 1ms)
+	tmIntvIMU 	= 0;			//Reset elapse time
+	
+	
+	// G value output unit : g
+	valMPU9255.AccelX = inIMU.getAccelX_mss(); 
+	valMPU9255.AccelY = inIMU.getAccelY_mss(); 
+	valMPU9255.AccelZ = inIMU.getAccelZ_mss(); 
+
+	// Gyro value output unit : radian
+	valMPU9255.GyroX = inIMU.getGyroX_rads(); 
+	valMPU9255.GyroY = inIMU.getGyroY_rads(); 
+	valMPU9255.GyroZ = inIMU.getGyroZ_rads(); 
+
+	return 0;
   
 }
+
+
+
+void send_PID_Parameter()
+{
+	byte payload[sizeof(double)*5] = {0};
+	uint8_t add = 0;
+	uint8_t cmd = uCMD_PID_SEND_PARAM;
+
+	memcpy(&payload[add], &last_err, sizeof(double));
+	add += sizeof(double);
+
+	memcpy(&payload[add], &accum_err, sizeof(double));
+	add += sizeof(double);
+
+	memcpy(&payload[add], &pid_cfg.P_Reg, sizeof(double));
+	add += sizeof(double);
+
+	memcpy(&payload[add], &pid_cfg.I_Reg, sizeof(double));
+	add += sizeof(double);
+
+	memcpy(&payload[add], &pid_cfg.D_Reg, sizeof(double));
+	add += sizeof(double);
+
+
+	sendData_toServer(cmd, payload, add, myUDPClient);
+}
+
+
+void sendIMUData()
+{
+	int valMPU9255_leng = sizeof(IMU_6axis_t);
+	int leng = valMPU9255_leng;
+	int add = 0;
+
+	uint8_t payload[valMPU9255_leng] = {0};
+	uint8_t cmd = uCMD_IMU_SEND_VALUE;
+
+	
+	memcpy(&payload[add], &valMPU9255.AccelX, sizeof(float));
+	add += sizeof(float);
+	
+	memcpy(&payload[add], &valMPU9255.AccelY, sizeof(float));
+	add += sizeof(float);
+	
+	memcpy(&payload[add], &valMPU9255.AccelZ, sizeof(float));
+	add += sizeof(float);
+	
+	memcpy(&payload[add], &valMPU9255.GyroX, sizeof(float));
+	add += sizeof(float);
+	
+	memcpy(&payload[add], &valMPU9255.GyroY, sizeof(float));
+	add += sizeof(float);
+	
+	memcpy(&payload[add], &valMPU9255.GyroZ, sizeof(float));
+	add += sizeof(float);
+
+	sendData_toServer(cmd, payload, add, myUDPClient);
+}
+
+
+
+
+
 
 
 
@@ -317,19 +557,22 @@ void SerialReadHandle()
 
 
 
-
+		
 
 void UDP_rcvHandler()
 {
-	static int dataIdx = 0;
+	static int 			dataIdx = 0;
+	static UDP_pkt_t 	rcvingPkt;
 
 	byte  packetBuffer[255];
 	int   leng;
+	int   validPktLeng = 0;
 	bool  rcvOK = receiveData_fromServer(packetBuffer, &leng);
-	UDP_pkt_t rcvingPkt;
-	uint16_t add = 0;
 
-	rcvingPkt.pktOK = false;
+	if(rcvOK == false)	return;
+	
+	uint16_t add 	= 0;
+
 
 	while(leng != add)
 	{
@@ -338,7 +581,11 @@ void UDP_rcvHandler()
 			case eUDP_wait_frmId:
 				UDP_initPacketStructure(&rcvingPkt);
 				rcvingPkt.frmId 	= packetBuffer[add++];
-
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);
+				PRINT_DBG("frmId :");
+				PRINTLN_DBG(rcvingPkt.frmId);
+#endif				
 				switch(rcvingPkt.frmId)
 				{
 					case FRM_NORMAL:
@@ -352,6 +599,11 @@ void UDP_rcvHandler()
 			case eUDP_wait_frmIdx:
 				rcvingPkt.frmIdx 	= packetBuffer[add++];
 
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);
+				PRINT_DBG("frmIdx:");
+				PRINTLN_DBG(rcvingPkt.frmIdx);
+#endif				
 				switch(rcvingPkt.frmIdx)
 				{
 					case FRM_NORMAL_IDX:UDP_rcvSts	= eUDP_wait_pktId;	break;
@@ -361,9 +613,12 @@ void UDP_rcvHandler()
 				break;
 				
 			case eUDP_wait_pktId:
-				//PKT_ID_NORMAL
 				rcvingPkt.pktId 	= packetBuffer[add++];
-
+#ifdef ISR_DBG_MODE				
+				PRINT_LOG(add,leng);
+				PRINT_DBG("pktId :");
+				PRINTLN_DBG(rcvingPkt.pktId);
+#endif				
 				switch(rcvingPkt.pktId)
 				{
 					case PKT_ID_NORMAL:	UDP_rcvSts	= eUDP_wait_pktCmd;	break;
@@ -373,12 +628,17 @@ void UDP_rcvHandler()
 				
 			case eUDP_wait_pktCmd:
 				rcvingPkt.pktCmd 	= packetBuffer[add++];
-
+				
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);
+				PRINT_DBG("pktCmd:");
+				PRINTLN_DBG(rcvingPkt.pktCmd);
+#endif				
 				switch(rcvingPkt.pktId)
 				{
 					case uCMD_MT_SPD:
 					case uCMD_MT_STOP:
-					case uCMD_MT_REV:
+					case uCMD_MT_MOVE:
 					case uCMD_PID_ONOFF:
 					case uCMD_PID_RST:
 					case uCMD_PID_SET_K_PARAM:
@@ -391,13 +651,26 @@ void UDP_rcvHandler()
 				
 			case eUDP_wait_pktLen:
 				rcvingPkt.pktLen 	= packetBuffer[add++];
-				UDP_rcvSts 			= eUDP_wait_data;
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);			
+				PRINT_DBG("pktLen:");
+				PRINTLN_DBG(rcvingPkt.pktLen);
+#endif			
+
+				if(rcvingPkt.pktLen == 0)	UDP_rcvSts 		= eUDP_wait_cs;
+				else						UDP_rcvSts 		= eUDP_wait_data;
+				
 				dataIdx				= 0;
 				break;
 				
 			case eUDP_wait_data:
 				rcvingPkt.data[dataIdx++] = packetBuffer[add++];
 
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);
+				PRINT_DBG("pktLen:");
+				PRINTLN_DBG(rcvingPkt.pktLen);
+#endif			
 				if(dataIdx == rcvingPkt.pktLen)
 				{
 					UDP_rcvSts 			= eUDP_wait_cs;
@@ -406,14 +679,24 @@ void UDP_rcvHandler()
 				
 			case eUDP_wait_cs:
 				rcvingPkt.checksum = packetBuffer[add++];
-				uint8_t calCs = CS_Calculation(packetBuffer, leng);
-
+				validPktLeng = rcvingPkt.pktLen + 5;
+				uint8_t calCs = CS_Calculation(packetBuffer, validPktLeng);
+#ifdef ISR_DBG_MODE
+				PRINT_LOG(add,leng);
+				PRINT_DBG("calCs :");
+				PRINT_DBG(calCs);
+				PRINT_DBG(", pktCs :");
+				PRINTLN_DBG(rcvingPkt.checksum);
+#endif				
 				if(rcvingPkt.checksum == calCs)
 				{
 					rcvingPkt.pktOK = true;
+					//PRINTLN_DBG("enqueue");
+					UDP_queue_push_back(&rcvingPkt);
+					
 				}
 
-				
+				UDP_rcvSts	= eUDP_wait_frmId;				
 				break;
 				
 				
@@ -425,123 +708,47 @@ void UDP_rcvHandler()
 }
 
 
-
-
-
-
-void UDP_cmdControl(byte cmd, byte *payload)
+bool receiveData_fromServer(byte *rcvPkt, int *leng)
 {
-	uint8_t u8Val = 0;
-	uint8_t	arrFloat[4];
-	uint8_t add = 0;
+  // if there's data available, read a packet
+	int packetSize = udp_client.parsePacket();
 
-	switch(cmd)
-	{
-		case uCMD_MT_SPD:
-			mSpd = payload[0];
-			myMotor.motorForward(0, mSpd);
-			break;
-		case uCMD_MT_STOP:  		//MotorSpeed Control
-			mSpd = payload[0];
-			myMotor.motorForward(0, 0);
-			break;
-		case uCMD_MT_REV:  			//Motor Dir Change
-			dir = payload[0];
-			dir == 0 ? myMotor.motorForward(0, mSpd) : myMotor.motorReverse(0, mSpd);
-			break;
-
-		case uCMD_PID_ONOFF:		// start stop PID Control
-			u8Val = payload[0];
-			if(u8Val == 1)
-				PID_Start = true;
-			else {
-				PID_Start = false;
-				PID_Init();
-			}
-			break;
-
-		case uCMD_PID_RST:	// PID Reset
-			PID_Init();
-			break;
-
-		case uCMD_PID_SET_K_PARAM:	// Set Ki, Kp, Kd value
-			add = 0;
-			for(uint8_t idx =0; idx <4; ++idx)	arrFloat[idx++] = payload[add++];
-			
-			memcpy(&pid_cfg.Kp, arrFloat, 4);
-
-			for(uint8_t idx =0; idx <4; ++idx)	arrFloat[idx++] = payload[add++];
-			
-			memcpy(&pid_cfg.Ki, arrFloat, 4);
-
-			for(uint8_t idx =0; idx <4; ++idx)	arrFloat[idx++] = payload[add++];
-			
-			memcpy(&pid_cfg.Kd, arrFloat, 4);
-			break;
-
-		case uCMD_PID_SET_TRT_ANGLE:	// Target Angle set
-			add = 0;
-			for(uint8_t idx =0; idx <4; ++idx)	arrFloat[idx++] = payload[add++];
-			
-			memcpy(&pid_cfg.targetAngle, arrFloat, 4);
-			break;
-
-		case uCMD_PID_SEND_PARAM:	// send err parameter
-			UDP_RcvSts.rcvReq_PID = true;
-			//send_PID_Parameter();
-			break;
-
-		case uCMD_IMU_SEND_VALUE:
-			UDP_RcvSts.rcvReq_IMU = true;
-			break;
-
-
-	}
-  
-}
-
-
-
-
-void send_PID_Parameter()
-{
-	byte sendData[sizeof(double)*5 + 1] = {0};
-	uint8_t add = 0;
-
-	sendData[add++] = (uint8_t)uCMD_PID_SEND_PARAM;
+	if (packetSize) {
+		IPAddress remoteIp = udp_client.remoteIP();
 		
-	memcpy(&sendData[add], &last_err, sizeof(double));
-	add += sizeof(double);
+	
+#ifdef ISR_DBG_MODE	
+		PRINT_DBG(remoteIp);
+		PRINT_DBG("Received packet of size ");
+		PRINTLN_DBG(packetSize);
+		PRINT_DBG("From ");
+		PRINT_DBG(", port ");
+		PRINTLN_DBG(udp_client.remotePort());
+#endif
+		// read the packet into packetBufffer
+		*leng = udp_client.read(rcvPkt, 255);
+		if (*leng > 0) {
+			rcvPkt[*leng] = 0;
+		}
 
-	memcpy(&sendData[add], &accum_err, sizeof(double));
-	add += sizeof(double);
-
-	memcpy(&sendData[add], &pid_cfg.P_Reg, sizeof(double));
-	add += sizeof(double);
-
-	memcpy(&sendData[add], &pid_cfg.I_Reg, sizeof(double));
-	add += sizeof(double);
-
-	memcpy(&sendData[add], &pid_cfg.D_Reg, sizeof(double));
-	add += sizeof(double);
-
-
-	sendData_toServer(sendData, add, myUDPClient);
+		//Serial.println(packetBuffer);
+		return true;
+	}
+	else
+	{
+#ifdef ISR_DBG_MODE	
+		PRINT_DBG("No UDP receive data\r\n");
+#endif
+		return false;
+	}
+		
+  
 }
 
 
-void sendIMUData()
-{
-  int valMPU9255_leng = sizeof(IMU_6axis_t);
-  int leng = valMPU9255_leng + 1;
-  byte sendData[valMPU9255_leng + 1] = {0};
 
-  sendData[0] = (uint8_t)uCMD_IMU_SEND_VALUE;
-  
-  memcpy(&sendData[1], &valMPU9255.AccelX, valMPU9255_leng);
-  
-  sendData_toServer(sendData, leng+4, myUDPClient);
-}
+
+
 
 
 

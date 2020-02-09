@@ -5,11 +5,12 @@ volatile Task ts[ID_MAX] = {
 		
 	{ID_SERIAL_MSG,			T_RUN,	0, 5,	REPEAT_ENABLE,	0,	Serial_Message_Task},
 	{ID_WIFI_MSG,			T_RUN,	0, 0,	REPEAT_ENABLE,	0,	WIFI_Handle_Task}, 
-	{ID_UDP_MSG,			T_RUN,	0, 0,	REPEAT_ENABLE,	0,	UDP_Message_Task},
-	{ID_BALANCING_MSG,		T_RUN,	0, 0,	REPEAT_ENABLE,	0,	Balancing_Proc_Task},
-	{ID_IMU_MSG,			T_RUN,	0, 50,	REPEAT_ENABLE,	0,	IMU_Handle_Task}, 
+	{ID_UDP_MSG,			T_RUN,	0, 5,	REPEAT_ENABLE,	0,	UDP_Message_Task},
+	{ID_BALANCING_MSG,		T_RUN,	0, 5,	REPEAT_ENABLE,	0,	Balacing_Msg_Task},
+	{ID_BALANCING,			T_RUN,	0, 10,	REPEAT_ENABLE,	0,	Balancing_Task}, 
 	{ID_CONFIG_MSG,			T_HOLD,	0, 50,	REPEAT_DISABLE,	0,	Config_Message_Task},
 	{ID_LED_TOGGLE,			T_RUN,	0, 100,	REPEAT_ENABLE,	0,	LedToggle_Task},
+	{ID_UDP_RCV_HANDLE,		T_RUN,	0, 0,	REPEAT_ENABLE,	0,	Task_UDP_Rcv_Handler},
 };
 
 
